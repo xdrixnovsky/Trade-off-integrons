@@ -1,0 +1,99 @@
+import os
+from pathlib import Path
+from Bio import SeqIO
+import pandas as pd
+from collections import defaultdict
+
+# Rutas de entrada y salida
+ruta_base = Path("archivos_extraidos/GBKFF_INTEGRONFINDER")
+salida_attc = Path("salida_attC_repetidos")
+salida_integrones = Path("salida_integrones")
+salida_attc.mkdir(parents=True, exist_ok=True)
+salida_integrones.mkdir(parents=True, exist_ok=True)
+
+archivos_gbk = list(ruta_base.rglob("*.gbk"))
+print(f"🔍 Se encontraron {len(archivos_gbk)} archivos .gbk")
+
+# --- Parte 1: Extracción de attC repetidos ---
+resultados_attc = []
+max_posiciones = 0
+
+for archivo in archivos_gbk:
+    # nombre de la carpeta contenedora
+    folder = archivo.parent.name
+
+    record = SeqIO.read(archivo, "genbank")
+    datos_attC = []
+
+    for feature in record.features:
+        if feature.type.lower() == "attc":
+            start = int(feature.location.start)
+            end = int(feature.location.end)
+            strand = feature.location.strand
+            sequence = record.seq[start:end]
+            if strand == -1:
+                sequence = sequence.reverse_complement()
+            sequence = sequence[:-6] if len(sequence) > 6 else sequence
+
+            datos_attC.append({
+                "LOCUS": record.id,
+                "folder": folder,
+                "sequence": str(sequence),
+                "position": f"{start}-{end}",
+                "length": len(sequence)
+            })
+
+    # Agrupar por secuencia repetida
+    repetidos = defaultdict(list)
+    for entry in datos_attC:
+        repetidos[entry["sequence"]].append(entry["position"])
+
+    for seq, posiciones in repetidos.items():
+        if len(posiciones) > 1:
+            max_posiciones = max(max_posiciones, len(posiciones))
+            resultado = {
+                "LOCUS": record.id,
+                "folder": folder,
+                "sequence": seq,
+                "length": len(seq),
+                "count": len(posiciones),
+            }
+            for i, pos in enumerate(posiciones):
+                resultado[f"positions{i+1}"] = pos
+            resultados_attc.append(resultado)
+
+# Guardar archivo de attC repetidos
+df_attc = pd.DataFrame(resultados_attc)
+all_columns = ["LOCUS", "folder", "sequence", "length", "count"] + [f"positions{i+1}" for i in range(max_posiciones)]
+df_attc = df_attc.reindex(columns=all_columns)
+df_attc.to_csv(salida_attc / "attC_repetidos_output.csv", index=False)
+print(f"✅ Archivo de attC guardado en: {salida_attc/'attC_repetidos_output.csv'}")
+
+# --- Parte 2: Extracción de información de integrones ---
+integron_info = []
+
+for archivo in archivos_gbk:
+    # nombre de la carpeta contenedora
+    folder = archivo.parent.name
+
+    record = SeqIO.read(archivo, "genbank")
+    for feature in record.features:
+        if feature.type.lower() == "integron":
+            start = int(feature.location.start)
+            end = int(feature.location.end)
+            strand = feature.location.strand
+            strand_str = "+" if strand == 1 else "-" if strand == -1 else "?"
+            integron_info.append({
+                "LOCUS": record.id,
+                "folder": folder,
+                "integron": f"{start}-{end}",
+                "length": end - start,
+                "strand": strand_str,
+                "DEFINITION": record.description
+            })
+
+# Guardar archivo de integrones
+df_integron = pd.DataFrame(integron_info)
+df_integron.to_csv(salida_integrones / "info_integrones.csv", index=False)
+print(f"✅ Archivo de integrones guardado en: {salida_integrones/'info_integrones.csv'}")
+#USAR ESTE SCRIPT PARA SAVER LOS VCR Y LA INFORMACION DEL INTEGRON
